@@ -44,8 +44,6 @@ postgres = [
     "psycopg[binary]>=3.3.3",
     "psycopg-pool>=3.3.0",
 ]
-
-[project.optional-dependencies]
 pymupdf = ["pymupdf4llm>=0.0.17"]
 
 [build-system]
