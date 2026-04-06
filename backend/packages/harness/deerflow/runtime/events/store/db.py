@@ -53,7 +53,15 @@ class DbRunEventStore(RunEventStore):
                 metadata = {**(metadata or {}), "content_truncated": True, "original_byte_length": len(encoded)}
         return content, metadata or {}
 
-    async def put(self, *, thread_id, run_id, event_type, category, content="", metadata=None, created_at=None):
+    async def put(self, *, thread_id, run_id, event_type, category, content="", metadata=None, created_at=None):  # noqa: D401
+        """Write a single event — low-frequency path only.
+
+        This opens a dedicated transaction with a FOR UPDATE lock to
+        assign a monotonic *seq*.  For high-throughput writes use
+        :meth:`put_batch`, which acquires the lock once for the whole
+        batch.  Currently the only caller is ``worker.run_agent`` for
+        the initial ``human_message`` event (once per run).
+        """
         content, metadata = self._truncate_trace(category, content, metadata)
         if isinstance(content, dict):
             db_content = json.dumps(content, default=str, ensure_ascii=False)
