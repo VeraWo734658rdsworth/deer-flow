@@ -246,6 +246,19 @@ class RunJournal(BaseCallbackHandler):
 
     def on_tool_end(self, output: Any, *, run_id: UUID, **kwargs: Any) -> None:
         from langchain_core.messages import ToolMessage
+        from langgraph.types import Command
+
+        # Tools that update graph state return a ``Command`` (e.g.
+        # ``present_files``). LangGraph later unwraps the inner ToolMessage
+        # into checkpoint state, so to stay checkpoint-aligned we must
+        # extract it here rather than storing ``str(Command(...))``.
+        if isinstance(output, Command):
+            update = getattr(output, "update", None) or {}
+            inner_msgs = update.get("messages") if isinstance(update, dict) else None
+            if isinstance(inner_msgs, list):
+                inner_tool_msg = next((m for m in inner_msgs if isinstance(m, ToolMessage)), None)
+                if inner_tool_msg is not None:
+                    output = inner_tool_msg
 
         # Extract fields from ToolMessage object when LangChain provides one.
         # LangChain's _format_output wraps tool results into a ToolMessage
