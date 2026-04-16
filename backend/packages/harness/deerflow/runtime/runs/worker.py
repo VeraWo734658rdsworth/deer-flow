@@ -54,6 +54,9 @@ class RunContext:
     run_events_config: Any | None = field(default=None)
     thread_store: Any | None = field(default=None)
     follow_up_to_run_id: str | None = field(default=None)
+    # Phase 2: app-level config flows through RunContext so Worker can build
+    # DeerFlowContext without consulting the process-global.
+    app_config: Any | None = field(default=None)
 
 
 async def run_agent(
@@ -169,7 +172,7 @@ async def run_agent(
         # LangGraph's astream(context=...) injects this into Runtime.context
         # so middleware/tools can access it via resolve_context().
         deer_flow_context = DeerFlowContext(
-            app_config=AppConfig.current(),
+            app_config=ctx.app_config if ctx.app_config is not None else AppConfig.current(),
             thread_id=thread_id,
         )
 
