@@ -30,16 +30,24 @@ def _vllm_disable_chat_template_kwargs(chat_template_kwargs: dict) -> dict:
     return disable_kwargs
 
 
-def create_chat_model(name: str | None = None, thinking_enabled: bool = False, **kwargs) -> BaseChatModel:
+def create_chat_model(
+    name: str | None = None,
+    thinking_enabled: bool = False,
+    *,
+    app_config: "AppConfig | None" = None,
+    **kwargs,
+) -> BaseChatModel:
     """Create a chat model instance from the config.
 
     Args:
         name: The name of the model to create. If None, the first model in the config will be used.
+        app_config: Application config. Falls back to AppConfig.current() when
+            omitted; new callers should pass this explicitly.
 
     Returns:
         A chat model instance.
     """
-    config = AppConfig.current()
+    config = app_config if app_config is not None else AppConfig.current()
     if name is None:
         name = config.models[0].name
     model_config = config.get_model_config(name)

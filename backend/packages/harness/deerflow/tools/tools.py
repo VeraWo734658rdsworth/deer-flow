@@ -37,6 +37,8 @@ def get_available_tools(
     include_mcp: bool = True,
     model_name: str | None = None,
     subagent_enabled: bool = False,
+    *,
+    app_config: AppConfig | None = None,
 ) -> list[BaseTool]:
     """Get all available tools from config.
 
@@ -48,11 +50,13 @@ def get_available_tools(
         include_mcp: Whether to include tools from MCP servers (default: True).
         model_name: Optional model name to determine if vision tools should be included.
         subagent_enabled: Whether to include subagent tools (task, task_status).
+        app_config: Explicit application config. Falls back to AppConfig.current()
+            when omitted; new callers should pass this explicitly.
 
     Returns:
         List of available tools.
     """
-    config = AppConfig.current()
+    config = app_config if app_config is not None else AppConfig.current()
     tool_configs = [tool for tool in config.tools if groups is None or tool.group in groups]
 
     # Do not expose host bash by default when LocalSandboxProvider is active.
@@ -125,7 +129,7 @@ def get_available_tools(
     try:
         from deerflow.tools.builtins.invoke_acp_agent_tool import build_invoke_acp_agent_tool
 
-        acp_agents = AppConfig.current().acp_agents
+        acp_agents = config.acp_agents
         if acp_agents:
             acp_tools.append(build_invoke_acp_agent_tool(acp_agents))
             logger.info(f"Including invoke_acp_agent tool ({len(acp_agents)} agent(s): {list(acp_agents.keys())})")
