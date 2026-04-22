@@ -49,11 +49,14 @@ class DbThreadMetaRepository(ThreadMetaRepositoryProtocol):
             self,
             thread_id: str,
             *,
+            assistant_id: str | None = None,
             display_name: str | None = None,
             status: str | None = None,
             metadata: dict[str, Any] | None = None,
     ) -> None:
         values: dict = {}
+        if assistant_id is not None:
+            values["assistant_id"] = assistant_id
         if display_name is not None:
             values["display_name"] = display_name
         if status is not None:

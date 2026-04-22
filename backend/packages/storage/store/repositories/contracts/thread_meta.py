@@ -39,6 +39,7 @@ class ThreadMetaRepositoryProtocol(Protocol):
         self,
         thread_id: str,
         *,
+        assistant_id: str | None = None,
         display_name: str | None = None,
         status: str | None = None,
         metadata: dict[str, Any] | None = None,

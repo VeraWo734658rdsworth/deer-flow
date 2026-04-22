@@ -6,7 +6,12 @@ from store.repositories import (
     RunRepositoryProtocol,
     ThreadMetaRepositoryProtocol,
 )
-from store.repositories.db import DbFeedbackRepository, DbRunEventRepository, DbRunRepository, DbThreadMetaRepository
+from store.repositories.db import (
+    DbFeedbackRepository,
+    DbRunEventRepository,
+    DbRunRepository,
+    DbThreadMetaRepository,
+)
 
 
 def build_thread_meta_repository(session: AsyncSession) -> ThreadMetaRepositoryProtocol:
