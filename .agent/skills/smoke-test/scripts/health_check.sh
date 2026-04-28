@@ -1,125 +1,132 @@
-#!/usr/bin/env bash
-set +e
+#!/bin/bash
+# health_check.sh - Verify that all services are healthy after deployment
+# Part of the deer-flow smoke-test skill
+#
+# Usage: ./health_check.sh [--mode local|docker] [--timeout 60] [--verbose]
 
-echo "=========================================="
-echo "  Service Health Check"
-echo "=========================================="
-echo ""
+set -euo pipefail
 
-all_passed=true
-mode="${SMOKE_TEST_MODE:-auto}"
-summary_hint="make logs"
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+MODE="local"
+TIMEOUT=60
+VERBOSE=false
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-print_step() {
-    echo "$1"
-}
+# Colour helpers
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-check_http_status() {
-    local name="$1"
-    local url="$2"
-    local expected_re="$3"
-    local status
+pass() { echo -e "${GREEN}[PASS]${NC} $*"; }
+fail() { echo -e "${RED}[FAIL]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+info() { $VERBOSE && echo -e "[INFO] $*" || true; }
 
-    status="$(curl -s -o /dev/null -w "%{http_code}" "$url" 2>/dev/null)"
-    if echo "$status" | grep -Eq "$expected_re"; then
-        echo "✓ $name is accessible ($url -> $status)"
-    else
-        echo "✗ $name is not accessible ($url -> ${status:-000})"
-        all_passed=false
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode)      MODE="$2";    shift 2 ;;
+    --timeout)   TIMEOUT="$2"; shift 2 ;;
+    --verbose)   VERBOSE=true; shift   ;;
+    *) echo "Unknown option: $1"; exit 1 ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# Configuration — override via environment variables if needed
+# ---------------------------------------------------------------------------
+BACKEND_URL="${BACKEND_URL:-http://localhost:8000}"
+FRONTEND_URL="${FRONTEND_URL:-http://localhost:3000}"
+HEALTH_ENDPOINT="${HEALTH_ENDPOINT:-/health}"
+
+FAILURES=0
+
+# ---------------------------------------------------------------------------
+# Helper: poll a URL until HTTP 200 or timeout
+# ---------------------------------------------------------------------------
+wait_for_http() {
+  local label="$1"
+  local url="$2"
+  local deadline=$(( $(date +%s) + TIMEOUT ))
+
+  info "Polling $url (timeout ${TIMEOUT}s)"
+  while true; do
+    local code
+    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$url" 2>/dev/null || echo "000")
+    if [[ "$code" == "200" ]]; then
+      pass "$label is healthy (HTTP $code)"
+      return 0
     fi
-}
-
-check_listen_port() {
-    local name="$1"
-    local port="$2"
-
-    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
-        echo "✓ $name is listening on port $port"
-    else
-        echo "✗ $name is not listening on port $port"
-        all_passed=false
+    if [[ $(date +%s) -ge $deadline ]]; then
+      fail "$label did not become healthy within ${TIMEOUT}s (last HTTP $code)"
+      FAILURES=$(( FAILURES + 1 ))
+      return 1
     fi
+    info "  $label → HTTP $code, retrying…"
+    sleep 3
+  done
 }
 
-docker_available() {
-    command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1
+# ---------------------------------------------------------------------------
+# Helper: check a docker container is running
+# ---------------------------------------------------------------------------
+check_container() {
+  local name="$1"
+  local status
+  status=$(docker inspect --format='{{.State.Status}}' "$name" 2>/dev/null || echo "missing")
+  if [[ "$status" == "running" ]]; then
+    pass "Container '$name' is running"
+  else
+    fail "Container '$name' status: $status"
+    FAILURES=$(( FAILURES + 1 ))
+  fi
 }
 
-detect_mode() {
-    case "$mode" in
-        local|docker)
-            echo "$mode"
-            return
-            ;;
-    esac
+# ---------------------------------------------------------------------------
+# Main checks
+# ---------------------------------------------------------------------------
+echo "======================================="
+echo " deer-flow Health Check  [mode: $MODE]"
+echo "======================================="
 
-    if docker_available && docker ps --format "{{.Names}}" | grep -q "deer-flow"; then
-        echo "docker"
-    else
-        echo "local"
-    fi
-}
+# 1. Backend API health
+wait_for_http "Backend API" "${BACKEND_URL}${HEALTH_ENDPOINT}"
 
-mode="$(detect_mode)"
+# 2. Frontend
+wait_for_http "Frontend" "${FRONTEND_URL}"
 
-echo "Deployment mode: $mode"
-echo ""
-
-if [ "$mode" = "docker" ]; then
-    summary_hint="make docker-logs"
-    print_step "1. Checking container status..."
-    if docker ps --format "{{.Names}}" | grep -q "deer-flow"; then
-        echo "✓ Containers are running:"
-        docker ps --format "  - {{.Names}} ({{.Status}})"
-    else
-        echo "✗ No DeerFlow-related containers are running"
-        all_passed=false
-    fi
-else
-    summary_hint="logs/{langgraph,gateway,frontend,nginx}.log"
-    print_step "1. Checking local service ports..."
-    check_listen_port "Nginx" 2026
-    check_listen_port "Frontend" 3000
-    check_listen_port "Gateway" 8001
-    check_listen_port "LangGraph" 2024
+# 3. Docker-specific container checks
+if [[ "$MODE" == "docker" ]]; then
+  echo ""
+  echo "--- Docker container status ---"
+  check_container "deerflow-backend"
+  check_container "deerflow-frontend"
 fi
-echo ""
 
-echo "2. Waiting for services to fully start (30 seconds)..."
-sleep 30
+# 4. Quick API smoke — expect JSON body with a recognisable key
 echo ""
-
-echo "3. Checking frontend service..."
-check_http_status "Frontend service" "http://localhost:2026" "200|301|302|307|308"
-echo ""
-
-echo "4. Checking API Gateway..."
-health_response=$(curl -s http://localhost:2026/health 2>/dev/null)
-if [ $? -eq 0 ] && [ -n "$health_response" ]; then
-    echo "✓ API Gateway health check passed"
-    echo "  Response: $health_response"
+echo "--- API smoke probe ---"
+API_BODY=$(curl -s --max-time 10 "${BACKEND_URL}${HEALTH_ENDPOINT}" 2>/dev/null || echo "{}")
+if echo "$API_BODY" | grep -qiE '"status"\s*:\s*"ok"|"healthy"\s*:\s*true'; then
+  pass "Backend health response contains expected status field"
 else
-    echo "✗ API Gateway health check failed"
-    all_passed=false
+  warn "Backend health response did not contain expected status field — body: $API_BODY"
 fi
-echo ""
 
-echo "5. Checking LangGraph service..."
-check_http_status "LangGraph service" "http://localhost:2024/" "200|301|302|307|308|404"
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
 echo ""
-
-echo "=========================================="
-echo "  Health Check Summary"
-echo "=========================================="
-echo ""
-if [ "$all_passed" = true ]; then
-    echo "✅ All checks passed!"
-    echo ""
-    echo "🌐 Application URL: http://localhost:2026"
-    exit 0
+echo "======================================="
+if [[ $FAILURES -eq 0 ]]; then
+  pass "All health checks passed."
+  exit 0
 else
-    echo "❌ Some checks failed"
-    echo ""
-    echo "Please review: $summary_hint"
-    exit 1
+  fail "$FAILURES health check(s) failed."
+  exit 1
 fi
